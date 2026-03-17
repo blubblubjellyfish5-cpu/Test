@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CybZen FaceScan 3D Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/delaunator@5/delaunator.min.js"></script>
+<style>
+:root {
+  --bg:#030810; --panel:rgba(4,16,32,0.92);
+  --cyan:#00f5ff; --cyan-dim:rgba(0,245,255,0.12); --cyan-glow:rgba(0,245,255,0.5);
+  --purple:#bf5fff; --purple-dim:rgba(191,95,255,0.12);
+  --green:#00ff88; --red:#ff3355; --yellow:#ffcc00;
+  --text:#b8d8f0; --text-dim:#3a5878; --border:rgba(0,245,255,0.18);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html{height:-webkit-fill-available;}
+body{width:100%;height:100%;min-height:-webkit-fill-available;overflow:hidden;
+     background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(0,245,255,0.025) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(0,245,255,0.025) 1px,transparent 1px);
+  background-size:50px 50px;}
+
+/* ── LOADER ── */
+#loader{position:fixed;inset:0;z-index:999;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;}
+#loader-logo{font-family:'Orbitron',sans-serif;font-size:clamp(1rem,4vw,1.8rem);
+  font-weight:900;color:var(--cyan);letter-spacing:6px;text-shadow:0 0 40px var(--cyan-glow);}
+#loader-logo span{color:var(--purple);}
+#loader-sub{font-size:0.6rem;color:var(--purple);letter-spacing:3px;opacity:0.8;}
+.lbar-bg{width:min(340px,80vw);height:3px;background:rgba(0,245,255,0.08);border-radius:2px;overflow:hidden;}
+.lbar-fill{height:100%;width:0%;border-radius:2px;
+  background:linear-gradient(90deg,var(--cyan),var(--purple));transition:width 0.4s ease;
+  box-shadow:0 0 12px var(--cyan);}
+#loader-msg{font-size:0.6rem;color:var(--text-dim);letter-spacing:3px;}
+
+/* ── HEADER ── */
+#hdr{position:relative;z-index:2;height:46px;flex-shrink:0;
+  background:rgba(4,12,24,0.97);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;padding:0 16px;}
+#hdr-title{font-family:'Orbitron',sans-serif;font-size:0.78rem;font-weight:900;
+  color:var(--cyan);letter-spacing:4px;text-shadow:0 0 20px var(--cyan-glow);}
+#hdr-title span{color:var(--purple);}
+.hdr-right{display:flex;align-items:center;gap:9px;}
+#fs-btn{background:none;border:1px solid rgba(0,245,255,0.3);border-radius:5px;
+  color:var(--cyan);cursor:pointer;padding:4px 10px;font-size:0.75rem;transition:all 0.2s;}
+#fs-btn:hover{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,245,255,0.2);}
+#status-pill{font-size:0.58rem;letter-spacing:2px;padding:4px 12px;
+  border-radius:20px;border:1px solid currentColor;text-transform:uppercase;transition:all 0.3s;}
+.st-idle{color:var(--text-dim);}
+.st-scan{color:var(--cyan);animation:blink 1.2s ease infinite;}
+.st-proc{color:var(--yellow);animation:blink 0.5s ease infinite;}
+.st-prev{color:var(--green);}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* ── LAYOUT ── */
+#main{position:relative;z-index:1;display:flex;flex-direction:column;height:calc(100% - 46px);}
+.hidden{display:none!important;}
+
+/* ── SCAN VIEW ── */
+#scan-view{position:absolute;inset:0;display:flex;gap:8px;padding:8px;}
+#cam-wrap{position:relative;flex:1;border-radius:10px;overflow:hidden;
+  border:1px solid var(--border);background:#000;box-shadow:0 0 30px rgba(0,245,255,0.05);}
+#cam-vid{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block;}
+#cam-cvs{position:absolute;inset:0;width:100%;height:100%;}
+#face-guide{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+#face-guide svg{width:52%;max-width:200px;height:auto;}
+#hold-wrap{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;align-items:center;gap:5px;}
+#hold-svg{width:54px;height:54px;transform:rotate(-90deg);}
+#hold-track{stroke:rgba(0,245,255,0.1);}
+#hold-prog{stroke:var(--cyan);stroke-dasharray:157;stroke-dashoffset:157;
+  transition:stroke-dashoffset 0.08s linear,stroke 0.2s;filter:drop-shadow(0 0 5px var(--cyan));}
+#hold-lbl{font-size:0.5rem;color:var(--cyan);letter-spacing:3px;opacity:0.4;transition:opacity 0.3s;}
+#idle-ov{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;
+  background:rgba(3,8,16,0.6);backdrop-filter:blur(2px);}
+#idle-title{font-family:'Orbitron',sans-serif;font-size:clamp(1.1rem,4vw,2rem);
+  font-weight:900;color:var(--cyan);letter-spacing:5px;text-shadow:0 0 40px var(--cyan-glow);text-align:center;}
+#idle-sub{font-size:0.62rem;color:var(--text-dim);letter-spacing:2px;text-align:center;line-height:1.7;}
+#start-btn{margin-top:6px;font-family:'Orbitron',sans-serif;font-size:0.68rem;letter-spacing:3px;
+  padding:12px 28px;border-radius:8px;cursor:pointer;
+  background:var(--cyan-dim);border:1px solid var(--cyan);color:var(--cyan);
+  text-shadow:0 0 10px var(--cyan);box-shadow:0 0 20px rgba(0,245,255,0.12);transition:all 0.25s;}
+#start-btn:hover{background:rgba(0,245,255,0.2);box-shadow:0 0 35px rgba(0,245,255,0.3);}
+
+/* ── SCAN PANEL ── */
+#scan-panel{width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:7px;overflow:hidden;}
+.pcard{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:11px;flex-shrink:0;}
+.pcard h3{font-family:'Orbitron',sans-serif;font-size:0.5rem;letter-spacing:3px;
+  color:var(--cyan);opacity:0.55;margin-bottom:9px;}
+#ov-pct{font-family:'Orbitron',sans-serif;font-size:1.5rem;font-weight:700;
+  color:var(--cyan);text-shadow:0 0 15px var(--cyan-glow);line-height:1;}
+.prog-bar-bg{width:100%;height:4px;background:rgba(0,245,255,0.07);border-radius:3px;overflow:hidden;margin:7px 0 4px;}
+.prog-bar-fill{height:100%;border-radius:3px;
+  background:linear-gradient(90deg,var(--cyan),var(--purple));
+  box-shadow:0 0 8px var(--cyan-glow);transition:width 0.35s ease;width:0%;}
+#ov-text{font-size:0.56rem;color:var(--text-dim);letter-spacing:1px;}
+.pose-row{display:flex;align-items:center;gap:8px;padding:5px 0;
+  border-bottom:1px solid rgba(0,245,255,0.04);}
+.pose-row:last-child{border-bottom:none;}
+.pr-icon{font-size:1rem;width:20px;text-align:center;}
+.pr-info{flex:1;min-width:0;}
+.pr-name{font-size:0.57rem;letter-spacing:1px;color:var(--text);}
+.pr-bar-bg{width:100%;height:2.5px;background:rgba(255,255,255,0.04);border-radius:2px;margin-top:3px;overflow:hidden;}
+.pr-bar{height:100%;border-radius:2px;width:0%;transition:width 0.12s linear;}
+.pr-tick{font-size:0.8rem;width:13px;text-align:center;}
+.pose-row.done .pr-bar{background:var(--green);width:100%!important;}
+.pose-row.active .pr-bar{background:var(--cyan);box-shadow:0 0 4px var(--cyan);}
+.pose-row.pending .pr-bar{background:var(--text-dim);}
+.pose-row.done .pr-tick::after{content:'✓';color:var(--green);}
+.pose-row.active .pr-tick::after{content:'●';color:var(--cyan);animation:blink 0.8s ease infinite;}
+.pose-row.pending .pr-tick::after{content:'○';color:var(--text-dim);}
+#inst-icon{font-size:1.6rem;text-align:center;margin-bottom:6px;}
+#inst-text{font-size:0.64rem;color:var(--cyan);line-height:1.5;text-align:center;}
+#dens-val{font-family:'Orbitron',sans-serif;font-size:1.3rem;font-weight:700;
+  color:var(--purple);text-shadow:0 0 15px rgba(191,95,255,0.5);}
+#dens-lbl{font-size:0.52rem;color:var(--text-dim);letter-spacing:2px;margin-top:2px;}
+#stop-btn{width:100%;padding:10px;cursor:pointer;border-radius:7px;flex-shrink:0;
+  background:rgba(255,51,85,0.1);border:1px solid var(--red);color:var(--red);
+  font-family:'Orbitron',sans-serif;font-size:0.55rem;letter-spacing:3px;
+  text-align:center;transition:all 0.2s;margin-top:auto;}
+#stop-btn:hover{background:rgba(255,51,85,0.22);box-shadow:0 0 18px rgba(255,51,85,0.3);}
+
+/* ── PROCESSING ── */
+#proc-ov{position:absolute;inset:0;z-index:10;background:rgba(3,8,16,0.97);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;}
+.spin{width:52px;height:52px;border:2px solid rgba(0,245,255,0.1);
+  border-top-color:var(--cyan);border-radius:50%;animation:spin 0.7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#proc-title{font-family:'Orbitron',sans-serif;font-size:1rem;color:var(--cyan);
+  letter-spacing:4px;text-shadow:0 0 20px var(--cyan-glow);}
+#proc-step{font-size:0.6rem;color:var(--text-dim);letter-spacing:2px;text-align:center;max-width:280px;}
+#proc-stats{font-size:0.65rem;color:var(--purple);letter-spacing:1px;}
+
+/* ── PREVIEW ── */
+#prev-view{position:absolute;inset:0;display:flex;flex-direction:column;}
+#three-canvas{flex:1;display:block;width:100%;min-height:0;}
+#prev-bar{position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(transparent,rgba(3,8,16,0.97) 32%);
+  padding:28px 10px 12px;display:flex;flex-direction:column;gap:7px;pointer-events:none;}
+.prev-row{display:flex;align-items:center;justify-content:center;gap:6px;
+  pointer-events:all;flex-wrap:wrap;}
+.ctrl-lbl{font-size:0.48rem;color:var(--text-dim);letter-spacing:2px;margin-right:2px;}
+.tbtn{font-family:'Share Tech Mono',monospace;font-size:0.57rem;letter-spacing:1px;
+  padding:6px 12px;border-radius:20px;cursor:pointer;transition:all 0.15s;
+  background:rgba(6,16,32,0.9);border:1px solid var(--border);color:var(--text-dim);white-space:nowrap;}
+.tbtn:hover{border-color:rgba(0,245,255,0.4);color:var(--text);}
+.tbtn.on{background:rgba(0,245,255,0.14);border-color:var(--cyan);color:var(--cyan);
+  box-shadow:0 0 10px rgba(0,245,255,0.2);}
+.ebtn{font-family:'Orbitron',sans-serif;font-size:0.5rem;letter-spacing:2px;
+  padding:7px 13px;border-radius:20px;cursor:pointer;transition:all 0.15s;
+  background:rgba(191,95,255,0.1);border:1px solid var(--purple);color:var(--purple);white-space:nowrap;}
+.ebtn:hover{background:rgba(191,95,255,0.22);box-shadow:0 0 14px rgba(191,95,255,0.3);}
+#rescan-btn{font-family:'Orbitron',sans-serif;font-size:0.5rem;letter-spacing:2px;
+  padding:7px 13px;border-radius:20px;cursor:pointer;transition:all 0.15s;
+  background:rgba(0,255,136,0.07);border:1px solid var(--green);color:var(--green);white-space:nowrap;}
+#rescan-btn:hover{background:rgba(0,255,136,0.18);box-shadow:0 0 14px rgba(0,255,136,0.3);}
+#mesh-info{font-size:0.52rem;color:var(--text-dim);letter-spacing:1px;text-align:center;opacity:0.7;}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:18px;right:16px;z-index:1000;
+  background:rgba(4,12,24,0.96);border:1px solid var(--border);border-radius:6px;
+  padding:9px 16px;font-size:0.67rem;color:var(--cyan);letter-spacing:1px;
+  opacity:0;transform:translateY(8px);transition:all 0.25s;pointer-events:none;}
+#toast.show{opacity:1;transform:translateY(0);}
+</style>
+</head>
+<body>
+
+<!-- LOADER -->
+<div id="loader">
+  <div id="loader-logo">CYBZEN <span>//</span> FACESCAN <span>3D</span> PRO</div>
+  <div id="loader-sub">TEMPLATE MESH · LOOP SUBDIVISION · LAPLACIAN SMOOTHING</div>
+  <div class="lbar-bg"><div class="lbar-fill" id="lbar"></div></div>
+  <div id="loader-msg">BOOTING NEURAL MESH ENGINE...</div>
+</div>
+
+<!-- HEADER -->
+<div id="hdr">
+  <div id="hdr-title">CYBZEN <span>//</span> FACESCAN 3D <span>PRO</span></div>
+  <div class="hdr-right">
+    <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+    <div id="status-pill" class="st-idle">IDLE</div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- ══ SCAN VIEW ══ -->
+  <div id="scan-view">
+    <div id="cam-wrap">
+      <video id="cam-vid" autoplay playsinline muted></video>
+      <canvas id="cam-cvs"></canvas>
+      <div id="face-guide">
+        <svg viewBox="0 0 100 130" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <ellipse cx="50" cy="48" rx="30" ry="38" stroke="#00f5ff" stroke-width="0.7" stroke-dasharray="4 2.5" opacity="0.4"/>
+          <ellipse cx="37" cy="46" rx="7" ry="4.5" stroke="#00f5ff" stroke-width="0.5" opacity="0.22"/>
+          <ellipse cx="63" cy="46" rx="7" ry="4.5" stroke="#00f5ff" stroke-width="0.5" opacity="0.22"/>
+          <path d="M50 47 L47 61 Q50 63 53 61 Z" stroke="#00f5ff" stroke-width="0.5" fill="none" opacity="0.22"/>
+          <path d="M41 72 Q50 79 59 72" stroke="#00f5ff" stroke-width="0.5" fill="none" opacity="0.22"/>
+          <line x1="48" y1="48" x2="52" y2="48" stroke="#00f5ff" stroke-width="0.6" opacity="0.5"/>
+          <line x1="50" y1="46" x2="50" y2="50" stroke="#00f5ff" stroke-width="0.6" opacity="0.5"/>
+        </svg>
+      </div>
+      <div id="hold-wrap">
+        <svg id="hold-svg" viewBox="0 0 58 58">
+          <circle id="hold-track" cx="29" cy="29" r="25" stroke-width="3" fill="none"/>
+          <circle id="hold-prog" cx="29" cy="29" r="25" stroke-width="3" fill="none"/>
+        </svg>
+        <div id="hold-lbl">HOLD POSE</div>
+      </div>
+      <div id="idle-ov">
+        <div id="idle-title">FACESCAN 3D PRO</div>
+        <div id="idle-sub">LOOP SUBDIVISION MESH ENGINE<br>5-POSE MULTI-ANGLE CAPTURE</div>
+        <button id="start-btn" onclick="startScan()">⟶ BEGIN SCAN</button>
+      </div>
+    </div>
+
+    <!-- Right Panel -->
+    <div id="scan-panel">
+      <div class="pcard">
+        <h3>SCAN PROGRESS</h3>
+        <div id="ov-pct">0%</div>
+        <div class="prog-bar-bg"><div class="prog-bar-fill" id="ov-bar"></div></div>
+        <div id="ov-text">0 / 5 POSES COMPLETE</div>
+      </div>
+      <div class="pcard" style="flex:1;overflow:auto;">
+        <h3>POSE SEQUENCE</h3>
+        <div id="pose-list"></div>
+      </div>
+      <div class="pcard">
+        <h3>CURRENT TARGET</h3>
+        <div id="inst-icon">📷</div>
+        <div id="inst-text">Start scan to begin</div>
+      </div>
+      <div class="pcard">
+        <h3>POINT DENSITY</h3>
+        <div id="dens-val">0</div>
+        <div id="dens-lbl">LANDMARKS CAPTURED</div>
+      </div>
+      <button id="stop-btn" onclick="stopAndExport()">⏹ STOP &amp; EXPORT NOW</button>
+    </div>
+  </div>
+
+  <!-- ══ PROCESSING ══ -->
+  <div id="proc-ov" class="hidden">
+    <div class="spin"></div>
+    <div id="proc-title">BUILDING MESH</div>
+    <div id="proc-step">INITIALIZING...</div>
+    <div id="proc-stats"></div>
+  </div>
+
+  <!-- ══ PREVIEW ══ -->
+  <div id="prev-view" class="hidden">
+    <canvas id="three-canvas"></canvas>
+    <div id="prev-bar">
+      <div id="mesh-info">— MESH INFO —</div>
+      <div class="prev-row">
+        <span class="ctrl-lbl">VIEW</span>
+        <button class="tbtn on" id="vw-wire" onclick="setView('wire')">WIRE</button>
+        <button class="tbtn" id="vw-solid" onclick="setView('solid')">SOLID</button>
+        <button class="tbtn" id="vw-tex" onclick="setView('tex')">TEXTURED</button>
+        <button class="tbtn" id="vw-rot" onclick="toggleRot()">⟳ AUTO</button>
+        <button id="rescan-btn" onclick="doReset()">↺ RESCAN</button>
+      </div>
+      <div class="prev-row">
+        <span class="ctrl-lbl">EXPORT</span>
+        <button class="ebtn" onclick="doExportOBJ()">⬇ OBJ+MTL</button>
+        <button class="ebtn" onclick="doExportSTL()">⬇ STL</button>
+        <button class="ebtn" onclick="doExportGLB()">⬇ GLB</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+<div id="toast"></div>
+
+<script>
+/* ══════════════════════════════════════════
+   CONSTANTS
+══════════════════════════════════════════ */
+const POSES = [
+  {id:'front', label:'Face Forward',   icon:'😐', instr:'Look straight into the camera. Stay perfectly still.', tYaw:0,   tPitch:0},
+  {id:'left',  label:'Turn Left 45°',  icon:'↩️', instr:'Turn head to the LEFT slowly until guide lines up.',  tYaw:40,  tPitch:0},
+  {id:'right', label:'Turn Right 45°', icon:'↪️', instr:'Turn head to the RIGHT slowly until guide lines up.', tYaw:-40, tPitch:0},
+  {id:'up',    label:'Tilt Up',        icon:'⬆️', instr:'Gently tilt your chin UPWARD.',                       tYaw:0,   tPitch:-26},
+  {id:'down',  label:'Tilt Down',      icon:'⬇️', instr:'Gently tilt your chin DOWNWARD.',                     tYaw:0,   tPitch:22},
+];
+const HOLD_MS   = 2300;
+const YAW_TOL   = 17;
+const PITCH_TOL = 15;
+const MAX_EDGE  = 0.064;
+const SUB_PASSES = 2;
+const SMOOTH_ITERS = 5;
+const SMOOTH_LAMBDA = 0.42;
+const Z_BOOST   = 3.2;   // Exaggerate Z depth for visual impact
+const SCALE     = 2.8;
+
+/* ══════════════════════════════════════════
+   STATE
+══════════════════════════════════════════ */
+let appMode = 'idle';
+let poseIdx = 0;
+let captured = Array(POSES.length).fill(null);
+let holdTs = null;
+let faceMeshInst = null;
+let isSending = false;
+let texDataURL = null;
+
+// 3D state
+let storedVerts = null, storedTris = null;
+let threeRenderer=null, threeScene=null, threeCam=null, threeControls=null;
+let faceMeshGroup = null;
+let autoRot = false;
+let viewMode = 'wire';
+
+/* ══════════════════════════════════════════
+   UI
+══════════════════════════════════════════ */
+function setMode(m) {
+  appMode = m;
+  const pill = document.getElementById('status-pill');
+  const map  = {idle:'IDLE',scanning:'SCANNING',processing:'PROCESSING',preview:'PREVIEW'};
+  const cls  = {idle:'st-idle',scanning:'st-scan',processing:'st-proc',preview:'st-prev'};
+  pill.textContent = map[m]||m.toUpperCase();
+  pill.className   = cls[m]||'st-idle';
+
+  const scanV = document.getElementById('scan-view');
+  const procV = document.getElementById('proc-ov');
+  const prevV = document.getElementById('prev-view');
+  const idleO = document.getElementById('idle-ov');
+  const holdW = document.getElementById('hold-wrap');
+  scanV.classList.toggle('hidden', m==='preview');
+  procV.classList.toggle('hidden', m!=='processing');
+  prevV.classList.toggle('hidden', m!=='preview');
+  idleO.classList.toggle('hidden', m!=='idle');
+  holdW.classList.toggle('hidden', m==='idle');
+
+  if (m==='preview' && threeRenderer) setTimeout(onThreeResize, 100);
+}
+
+function showToast(msg, dur=2800) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(()=>t.classList.remove('show'), dur);
+}
+
+function setLbar(pct, msg) {
+  document.getElementById('lbar').style.width = pct+'%';
+  document.getElementById('loader-msg').textContent = msg;
+}
+
+function setProcStep(s, stats='') {
+  document.getElementById('proc-step').textContent = s;
+  document.getElementById('proc-stats').textContent = stats;
+}
+
+/* ══════════════════════════════════════════
+   POSE LIST
+══════════════════════════════════════════ */
+function buildPoseList() {
+  const list = document.getElementById('pose-list');
+  list.innerHTML = '';
+  POSES.forEach((p,i)=>{
+    const row = document.createElement('div');
+    row.className='pose-row pending'; row.id='pr-'+i;
+    row.innerHTML=`<span class="pr-icon">${p.icon}</span>
+      <div class="pr-info"><div class="pr-name">${p.label}</div>
+        <div class="pr-bar-bg"><div class="pr-bar" id="prb-${i}"></div></div></div>
+      <span class="pr-tick" id="prt-${i}"></span>`;
+    list.appendChild(row);
+  });
+}
+function setPoseRow(i, state, pct=0) {
+  const row = document.getElementById('pr-'+i);
+  if (!row) return;
+  row.className='pose-row '+state;
+  if (state==='active') {
+    document.getElementById('prb-'+i).style.width=(pct*100)+'%';
+    document.getElementById('inst-icon').textContent=POSES[i].icon;
+    document.getElementById('inst-text').textContent=POSES[i].instr;
+  }
+}
+function refreshProgress() {
+  const done = captured.filter(Boolean).length;
+  const pct  = Math.round(done/POSES.length*100);
+  document.getElementById('ov-pct').textContent=pct+'%';
+  document.getElementById('ov-bar').style.width=pct+'%';
+  document.getElementById('ov-text').textContent=done+' / '+POSES.length+' POSES COMPLETE';
+  const total = captured.filter(Boolean).reduce((s,c)=>s+c.length,0);
+  document.getElementById('dens-val').textContent=total;
+}
+
+/* ══════════════════════════════════════════
+   HEAD POSE ESTIMATION
+══════════════════════════════════════════ */
+function estimatePose(lm) {
+  if (!lm||lm.length<468) return {yaw:0,pitch:0};
+  const nose=lm[1], lEar=lm[234], rEar=lm[454], fore=lm[10], chin=lm[152];
+  const earW = Math.abs(rEar.x-lEar.x);
+  const earMidX=(lEar.x+rEar.x)/2;
+  const yaw   = earW>0.01 ? ((nose.x-earMidX)/earW)*90 : 0;
+  const faceH = Math.abs(chin.y-fore.y);
+  const faceMidY=(fore.y+chin.y)/2;
+  const pitch = faceH>0.01 ? ((nose.y-faceMidY)/faceH)*80 : 0;
+  return {yaw,pitch};
+}
+
+/* ══════════════════════════════════════════
+   MEDIAPIPE
+══════════════════════════════════════════ */
+async function initApp() {
+  setLbar(5,'LOADING FACE MESH MODEL...');
+  faceMeshInst = new FaceMesh({
+    locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`
+  });
+  faceMeshInst.setOptions({
+    maxNumFaces:1, refineLandmarks:true,
+    minDetectionConfidence:0.5, minTrackingConfidence:0.5
+  });
+  faceMeshInst.onResults(onResults);
+
+  setLbar(30,'REQUESTING CAMERA ACCESS...');
+  try { await setupCamera(); }
+  catch(e) { setLbar(100,'⚠ CAMERA ERROR — allow camera access and refresh'); return; }
+
+  setLbar(65,'WARMING UP NEURAL MODEL...');
+  const vid=document.getElementById('cam-vid');
+  await sleep(700);
+  if (vid.readyState>=2) { try{ await faceMeshInst.send({image:vid}); }catch(e){} }
+  await sleep(500);
+
+  setLbar(100,'MESH ENGINE READY ✓');
+  await sleep(380);
+  document.getElementById('loader').style.display='none';
+  buildPoseList(); refreshProgress(); setMode('idle');
+  startFrameLoop();
+}
+
+async function setupCamera() {
+  const vid=document.getElementById('cam-vid');
+  const stream=await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false
+  });
+  vid.srcObject=stream;
+  await new Promise((res,rej)=>{ vid.onloadedmetadata=()=>vid.play().then(res).catch(res); setTimeout(rej,8000); });
+}
+
+function startFrameLoop() {
+  const vid=document.getElementById('cam-vid');
+  async function loop() {
+    requestAnimationFrame(loop);
+    if (appMode==='scanning'&&!isSending&&vid.readyState>=2) {
+      isSending=true;
+      try{ await faceMeshInst.send({image:vid}); }catch(e){}
+      finally{ isSending=false; }
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ══════════════════════════════════════════
+   FACE MESH RESULTS
+══════════════════════════════════════════ */
+function onResults(res) {
+  if (appMode!=='scanning') return;
+  const cvs=document.getElementById('cam-cvs');
+  const vid=document.getElementById('cam-vid');
+  if (cvs.width!==vid.videoWidth||cvs.height!==vid.videoHeight) {
+    cvs.width=vid.videoWidth||640; cvs.height=vid.videoHeight||480;
+  }
+  const ctx=cvs.getContext('2d');
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+
+  if (!res.multiFaceLandmarks||!res.multiFaceLandmarks[0]) {
+    holdTs=null; setHoldRing(0); return;
+  }
+  const lm=res.multiFaceLandmarks[0];
+  drawOverlay(ctx,lm,cvs.width,cvs.height);
+
+  const est=estimatePose(lm);
+  const cur=POSES[poseIdx];
+  const match=Math.abs(est.yaw-cur.tYaw)<YAW_TOL&&Math.abs(est.pitch-cur.tPitch)<PITCH_TOL;
+
+  if (match) {
+    if (!holdTs) holdTs=Date.now();
+    const prog=Math.min((Date.now()-holdTs)/HOLD_MS,1);
+    setHoldRing(prog); setPoseRow(poseIdx,'active',prog);
+    if (prog>=1) capturePose(lm);
+  } else {
+    holdTs=null; setHoldRing(0); setPoseRow(poseIdx,'active',0);
+  }
+}
+
+function drawOverlay(ctx,lm,w,h) {
+  const tes=window.FACEMESH_TESSELATION;
+  if (!tes) return;
+  ctx.save();
+  ctx.strokeStyle='rgba(0,245,255,0.22)';
+  ctx.lineWidth=0.55;
+  for (const [s,e] of tes) {
+    const a=lm[s],b=lm[e];
+    if (!a||!b) continue;
+    ctx.beginPath();
+    ctx.moveTo((1-a.x)*w,a.y*h);
+    ctx.lineTo((1-b.x)*w,b.y*h);
+    ctx.stroke();
+  }
+  ctx.fillStyle='rgba(191,95,255,0.7)';
+  for (const i of [1,10,152,234,454,33,263]) {
+    const p=lm[i]; if(!p) continue;
+    ctx.beginPath(); ctx.arc((1-p.x)*w,p.y*h,2.5,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function setHoldRing(prog) {
+  document.getElementById('hold-prog').style.strokeDashoffset=157*(1-prog);
+  document.getElementById('hold-prog').style.stroke=prog>0.85?'var(--green)':prog>0.5?'var(--yellow)':'var(--cyan)';
+  document.getElementById('hold-lbl').style.opacity=prog>0?'1':'0.4';
+}
+
+/* ══════════════════════════════════════════
+   SCAN CONTROL
+══════════════════════════════════════════ */
+function startScan() {
+  poseIdx=0; captured=Array(POSES.length).fill(null);
+  holdTs=null; texDataURL=null;
+  buildPoseList(); refreshProgress();
+  setMode('scanning'); setPoseRow(0,'active',0);
+  showToast('SCAN STARTED — Follow on-screen pose instructions');
+}
+
+function capturePose(lm) {
+  holdTs=null;
+  captured[poseIdx]=lm.map(p=>({x:p.x,y:p.y,z:p.z}));
+
+  // Capture texture from front pose
+  if (poseIdx===0) {
+    const vid=document.getElementById('cam-vid');
+    const tc=document.createElement('canvas');
+    tc.width=vid.videoWidth||640; tc.height=vid.videoHeight||480;
+    tc.getContext('2d').drawImage(vid,0,0);
+    texDataURL=tc.toDataURL('image/jpeg',0.88);
+  }
+
+  setPoseRow(poseIdx,'done',1); refreshProgress();
+  showToast('✓ '+POSES[poseIdx].label+' CAPTURED!');
+  poseIdx++;
+
+  if (poseIdx>=POSES.length) { setTimeout(buildAndShow,300); }
+  else { setPoseRow(poseIdx,'active',0); }
+}
+
+function stopAndExport() {
+  const done=captured.filter(Boolean).length;
+  if (!done) { showToast('⚠ No poses captured yet!'); return; }
+  showToast('Processing '+done+' pose'+(done>1?'s':'')+'...');
+  setTimeout(buildAndShow,300);
+}
+
+function doReset() {
+  if (faceMeshGroup) { threeScene.remove(faceMeshGroup); faceMeshGroup=null; }
+  storedVerts=null; storedTris=null; texDataURL=null;
+  poseIdx=0; captured=Array(POSES.length).fill(null);
+  buildPoseList(); refreshProgress(); setMode('idle');
+}
+
+/* ══════════════════════════════════════════
+   ██ MESH PROCESSING ENGINE ██
+══════════════════════════════════════════ */
+
+// Step 1 — Merge landmarks from all poses with improved depth
+function mergePoses() {
+  const front = captured[0];
+  if (!front) return [];
+  const weights = [0.45, 0.2, 0.2, 0.08, 0.07];
+
+  return front.map((_, i) => {
+    const x = front[i].x;
+    const y = front[i].y;
+    let z=0, wt=0;
+
+    captured.forEach((c, pi) => {
+      if (!c||!c[i]) return;
+      const w = weights[pi]||0.05;
+      z += c[i].z * w; wt += w;
+    });
+
+    // Depth from left/right parallax (geometric triangulation)
+    const YAW_RAD = 40 * Math.PI / 180;
+    const sinYaw  = Math.sin(YAW_RAD);
+    if (captured[1]&&captured[1][i] && captured[2]&&captured[2][i]) {
+      const parallax = (captured[2][i].x - captured[1][i].x) * 0.5;
+      const zParallax = -(parallax / sinYaw) * 0.18;
+      z = (z/wt)*0.6 + zParallax*0.4;
+    } else if (wt > 0) {
+      z = z / wt;
+    }
+
+    return {x, y, z};
+  });
+}
+
+// Step 2 — Delaunay triangulation
+function triangulateFace(lm) {
+  const pts = lm.map(l=>[l.x, l.y]);
+  let d;
+  try { d = Delaunator.from(pts); } catch(e) { return []; }
+  const tris = [];
+  for (let i=0; i<d.triangles.length; i+=3) {
+    const a=d.triangles[i], b=d.triangles[i+1], c=d.triangles[i+2];
+    const la=lm[a], lb=lm[b], lc=lm[c];
+    if (!la||!lb||!lc) continue;
+    if (Math.hypot(la.x-lb.x,la.y-lb.y)<MAX_EDGE &&
+        Math.hypot(lb.x-lc.x,lb.y-lc.y)<MAX_EDGE &&
+        Math.hypot(lc.x-la.x,lc.y-la.y)<MAX_EDGE) {
+      tris.push([a,b,c]);
+    }
+  }
+  return tris;
+}
+
+// Step 3 — Loop Subdivision (one pass)
+// verts: [{x,y,z,u,v}], tris: [[a,b,c], ...]
+function subdivideOnce(verts, tris) {
+  const edgeMidMap = new Map();
+  const edgeOpps   = new Map(); // edge key → [opp_v, ...]
+
+  // Build edge → opposite vertex map
+  for (const [a,b,c] of tris) {
+    for (const [e1,e2,opp] of [[a,b,c],[b,c,a],[c,a,b]]) {
+      const k = e1<e2 ? `${e1}:${e2}` : `${e2}:${e1}`;
+      if (!edgeOpps.has(k)) edgeOpps.set(k,[]);
+      edgeOpps.get(k).push(opp);
+    }
+  }
+
+  const newVerts = verts.map(v=>({...v}));
+  const newTris  = [];
+
+  function getMid(i,j) {
+    const k = i<j ? `${i}:${j}` : `${j}:${i}`;
+    if (edgeMidMap.has(k)) return edgeMidMap.get(k);
+    const vi=verts[i], vj=verts[j];
+    const opps = edgeOpps.get(k)||[];
+    let mp;
+    if (opps.length===2) {
+      const vo1=verts[opps[0]], vo2=verts[opps[1]];
+      mp={
+        x:0.375*(vi.x+vj.x)+0.125*(vo1.x+vo2.x),
+        y:0.375*(vi.y+vj.y)+0.125*(vo1.y+vo2.y),
+        z:0.375*(vi.z+vj.z)+0.125*(vo1.z+vo2.z),
+        u:0.5*(vi.u+vj.u), v:0.5*(vi.v+vj.v)
+      };
+    } else {
+      mp={x:0.5*(vi.x+vj.x),y:0.5*(vi.y+vj.y),z:0.5*(vi.z+vj.z),u:0.5*(vi.u+vj.u),v:0.5*(vi.v+vj.v)};
+    }
+    const idx=newVerts.length; newVerts.push(mp); edgeMidMap.set(k,idx);
+    return idx;
+  }
+
+  for (const [a,b,c] of tris) {
+    const mAB=getMid(a,b), mBC=getMid(b,c), mCA=getMid(c,a);
+    newTris.push([a,mAB,mCA],[b,mBC,mAB],[c,mCA,mBC],[mAB,mBC,mCA]);
+  }
+
+  return {verts:newVerts, tris:newTris};
+}
+
+// Step 4 — Laplacian Smoothing
+function laplacianSmooth(verts, tris, iters=SMOOTH_ITERS, lambda=SMOOTH_LAMBDA) {
+  const n = verts.length;
+  const adj = Array.from({length:n},()=>new Set());
+  const edgeCnt = new Map();
+
+  for (const [a,b,c] of tris) {
+    adj[a].add(b); adj[a].add(c);
+    adj[b].add(a); adj[b].add(c);
+    adj[c].add(a); adj[c].add(b);
+    for (const [i,j] of [[a,b],[b,c],[c,a]]) {
+      const k=i<j?`${i}:${j}`:`${j}:${i}`;
+      edgeCnt.set(k,(edgeCnt.get(k)||0)+1);
+    }
+  }
+
+  const isBoundary = new Uint8Array(n);
+  for (const [k,cnt] of edgeCnt) {
+    if (cnt===1) {
+      const [i,j]=k.split(':').map(Number);
+      isBoundary[i]=1; isBoundary[j]=1;
+    }
+  }
+
+  let v = verts.map(p=>({...p}));
+  for (let iter=0; iter<iters; iter++) {
+    const nv = v.map(p=>({...p}));
+    for (let i=0; i<n; i++) {
+      if (isBoundary[i]) continue;
+      const nb=[...adj[i]]; if (!nb.length) continue;
+      let sx=0,sy=0,sz=0;
+      for (const j of nb) { sx+=v[j].x; sy+=v[j].y; sz+=v[j].z; }
+      const cnt=nb.length;
+      nv[i]={...v[i],
+        x:v[i].x+lambda*(sx/cnt-v[i].x),
+        y:v[i].y+lambda*(sy/cnt-v[i].y),
+        z:v[i].z+lambda*(sz/cnt-v[i].z)
+      };
+    }
+    v=nv;
+  }
+  return v;
+}
+
+// Orchestrator
+async function buildAndShow() {
+  setMode('processing');
+  await sleep(60);
+
+  setProcStep('MERGING POSES & ESTIMATING DEPTH...');
+  await sleep(100);
+  const merged = mergePoses();
+  if (!merged.length) { showToast('⚠ Error: no landmark data'); setMode('idle'); return; }
+
+  setProcStep('DELAUNAY TRIANGULATION...');
+  await sleep(100);
+  const baseTris = triangulateFace(merged);
+  if (!baseTris.length) { showToast('⚠ Triangulation failed'); setMode('idle'); return; }
+
+  // Convert to vertex object array with UVs
+  let verts = merged.map(lm=>({x:lm.x, y:lm.y, z:lm.z, u:lm.x, v:1-lm.y}));
+  let tris  = baseTris;
+  setProcStep(`BASE MESH: ${verts.length} VERTS, ${tris.length} TRIS`,'PREPARING SUBDIVISION...');
+  await sleep(100);
+
+  for (let pass=1; pass<=SUB_PASSES; pass++) {
+    setProcStep(`LOOP SUBDIVISION — PASS ${pass}/${SUB_PASSES}...`,
+                `${verts.length} → ~${verts.length*4} vertices`);
+    await sleep(80);
+    const result = subdivideOnce(verts, tris);
+    verts=result.verts; tris=result.tris;
+  }
+
+  setProcStep(`LAPLACIAN SMOOTHING — ${SMOOTH_ITERS} PASSES...`,
+              `${verts.length} vertices being smoothed`);
+  await sleep(80);
+  verts = laplacianSmooth(verts, tris);
+
+  setProcStep('BUILDING THREE.JS GEOMETRY...',
+              `${verts.length} verts · ${tris.length} triangles`);
+  await sleep(80);
+  storedVerts=verts; storedTris=tris;
+  initThree();
+  buildFace3D();
+
+  setProcStep('MESH COMPLETE ✓',`${verts.length} VERTICES · ${tris.length} POLYGONS`);
+  document.getElementById('mesh-info').textContent=
+    `${verts.length} VERTICES  ·  ${tris.length} POLYGONS  ·  ${captured.filter(Boolean).length} POSES`;
+  await sleep(500);
+  setMode('preview'); setView('wire');
+}
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+/* ══════════════════════════════════════════
+   THREE.JS
+══════════════════════════════════════════ */
+function initThree() {
+  const cvs=document.getElementById('three-canvas');
+  if (threeRenderer) { setTimeout(onThreeResize,80); return; }
+
+  threeRenderer=new THREE.WebGLRenderer({canvas:cvs,antialias:true});
+  threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  threeRenderer.setClearColor(0x030810,1);
+
+  threeScene=new THREE.Scene();
+  threeCam=new THREE.PerspectiveCamera(50,1,0.001,200);
+  threeCam.position.set(0,0,2.8);
+
+  threeControls=new THREE.OrbitControls(threeCam,cvs);
+  threeControls.enableDamping=true; threeControls.dampingFactor=0.07;
+
+  threeScene.add(new THREE.AmbientLight(0x223355,1.3));
+  const d1=new THREE.DirectionalLight(0x00f5ff,2.0); d1.position.set(2,3,3); threeScene.add(d1);
+  const d2=new THREE.DirectionalLight(0xbf5fff,1.1); d2.position.set(-2,-1,2); threeScene.add(d2);
+  const d3=new THREE.DirectionalLight(0x00ff88,0.5); d3.position.set(0,-3,1); threeScene.add(d3);
+  const grid=new THREE.GridHelper(6,20,0x0a2035,0x0a2035);
+  grid.position.y=-1.2; threeScene.add(grid);
+
+  window.addEventListener('resize',()=>setTimeout(onThreeResize,50));
+  threeRenderLoop(); setTimeout(onThreeResize,80);
+}
+
+function onThreeResize() {
+  const cvs=document.getElementById('three-canvas');
+  const rect=cvs.getBoundingClientRect();
+  const w=rect.width||window.innerWidth;
+  const h=rect.height||(window.innerHeight-46-60);
+  threeRenderer.setSize(w,h,false);
+  threeCam.aspect=w/h; threeCam.updateProjectionMatrix();
+}
+
+function buildFace3D() {
+  if (faceMeshGroup) { threeScene.remove(faceMeshGroup); faceMeshGroup=null; }
+  if (!storedVerts||!storedTris||!storedTris.length) return;
+
+  const lm   = storedVerts;
+  const tris = storedTris;
+  const n    = lm.length;
+
+  // Center mesh
+  let cx=0,cy=0,cz=0;
+  lm.forEach(l=>{cx+=l.x;cy+=l.y;cz+=l.z;});
+  cx/=n; cy/=n; cz/=n;
+
+  const pos  = new Float32Array(n*3);
+  const uvs  = new Float32Array(n*2);
+  for (let i=0;i<n;i++) {
+    pos[i*3]   = (lm[i].x-cx)*SCALE;
+    pos[i*3+1] = -(lm[i].y-cy)*SCALE;
+    pos[i*3+2] = lm[i].z*SCALE*Z_BOOST;
+    uvs[i*2]   = lm[i].u;
+    uvs[i*2+1] = lm[i].v;
+  }
+
+  // Flat triangle array for Three.js index buffer
+  const flatTris = new Uint32Array(tris.length*3);
+  tris.forEach(([a,b,c],i)=>{ flatTris[i*3]=a; flatTris[i*3+1]=b; flatTris[i*3+2]=c; });
+
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('uv',       new THREE.BufferAttribute(uvs,2));
+  geo.setIndex(new THREE.BufferAttribute(flatTris,1));
+  geo.computeVertexNormals();
+
+  faceMeshGroup=new THREE.Group();
+
+  // Wireframe
+  const wMat=new THREE.MeshBasicMaterial({color:0x00e8f5,wireframe:true,transparent:true,opacity:0.65});
+  const wMesh=new THREE.Mesh(geo,wMat); wMesh.name='wire';
+  faceMeshGroup.add(wMesh);
+
+  // Solid phong with nice shading
+  const sMat=new THREE.MeshPhongMaterial({
+    color:0x0a3050,emissive:0x001825,specular:0x00c0d8,shininess:95,
+    side:THREE.DoubleSide,transparent:true,opacity:0.94
+  });
+  const sMesh=new THREE.Mesh(geo,sMat); sMesh.name='solid'; sMesh.visible=false;
+  faceMeshGroup.add(sMesh);
+
+  // Textured
+  if (texDataURL) {
+    const texLoader=new THREE.TextureLoader();
+    const tex=texLoader.load(texDataURL);
+    tex.flipY=false;
+    const tMat=new THREE.MeshPhongMaterial({map:tex,side:THREE.DoubleSide,shininess:30});
+    const tMesh=new THREE.Mesh(geo,tMat); tMesh.name='tex'; tMesh.visible=false;
+    faceMeshGroup.add(tMesh);
+  }
+
+  threeScene.add(faceMeshGroup);
+}
+
+function setView(v) {
+  viewMode=v;
+  ['wire','solid','tex'].forEach(id=>document.getElementById('vw-'+id)?.classList.remove('on'));
+  document.getElementById('vw-'+v)?.classList.add('on');
+  if (!faceMeshGroup) return;
+  faceMeshGroup.children.forEach(c=>{
+    if (v==='wire') c.visible=(c.name==='wire');
+    else c.visible=(c.name===v);
+  });
+  if (v==='tex'&&!texDataURL) showToast('⚠ No texture — front pose needed');
+}
+
+function toggleRot() {
+  autoRot=!autoRot;
+  threeControls.autoRotate=autoRot; threeControls.autoRotateSpeed=1.8;
+  document.getElementById('vw-rot').classList.toggle('on',autoRot);
+}
+
+function threeRenderLoop() {
+  requestAnimationFrame(threeRenderLoop);
+  if ((appMode==='preview'||appMode==='processing')&&threeRenderer) {
+    threeControls?.update();
+    threeRenderer.render(threeScene,threeCam);
+  }
+}
+
+/* ══════════════════════════════════════════
+   EXPORT
+══════════════════════════════════════════ */
+function dl(name, data, mime) {
+  const blob=new Blob([data],{type:mime});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),3000);
+}
+
+function getCenteredVerts() {
+  if (!storedVerts) return null;
+  let cx=0,cy=0,cz=0;
+  storedVerts.forEach(l=>{cx+=l.x;cy+=l.y;cz+=l.z;});
+  cx/=storedVerts.length; cy/=storedVerts.length; cz/=storedVerts.length;
+  return storedVerts.map(l=>({
+    x:+((l.x-cx)*SCALE).toFixed(6),
+    y:+(-(l.y-cy)*SCALE).toFixed(6),
+    z:+(l.z*SCALE*Z_BOOST).toFixed(6),
+    u:+(l.u).toFixed(6),
+    v:+(l.v).toFixed(6)
+  }));
+}
+
+function doExportOBJ() {
+  if (!storedVerts||!storedTris) { showToast('⚠ No mesh to export'); return; }
+  const verts=getCenteredVerts();
+  let obj='# CybZen FaceScan 3D Pro\n# '+verts.length+' vertices, '+storedTris.length+' faces\n';
+  if (texDataURL) obj+='mtllib face.mtl\nusemtl face_tex\n';
+  obj+='\n';
+  verts.forEach(v=>{ obj+=`v ${v.x} ${v.y} ${v.z}\n`; });
+  obj+='\n';
+  verts.forEach(v=>{ obj+=`vt ${v.u} ${v.v}\n`; });
+  obj+='\n';
+  storedTris.forEach(([a,b,c])=>{
+    const i=a+1,j=b+1,k=c+1;
+    obj+=`f ${i}/${i} ${j}/${j} ${k}/${k}\n`;
+  });
+  dl('face.obj',obj,'text/plain');
+  if (texDataURL) {
+    dl('face.mtl','newmtl face_tex\nKa 1 1 1\nKd 1 1 1\nKs 0.4 0.4 0.4\nNs 50\nmap_Kd face_texture.jpg\n','text/plain');
+    const a=document.createElement('a'); a.href=texDataURL; a.download='face_texture.jpg'; a.click();
+  }
+  showToast('✓ OBJ + MTL exported! ('+verts.length+' verts)');
+}
+
+function doExportSTL() {
+  if (!storedVerts||!storedTris) { showToast('⚠ No mesh to export'); return; }
+  const verts=getCenteredVerts();
+  const nTris=storedTris.length;
+  const buf=new ArrayBuffer(84+nTris*50);
+  const dv=new DataView(buf);
+  const hdr='CybZen FaceScan 3D Pro';
+  for (let i=0;i<80;i++) dv.setUint8(i,i<hdr.length?hdr.charCodeAt(i):0);
+  dv.setUint32(80,nTris,true);
+  let off=84;
+  for (const [a,b,c] of storedTris) {
+    const v0=verts[a],v1=verts[b],v2=verts[c];
+    const nx=(v1.y-v0.y)*(v2.z-v0.z)-(v1.z-v0.z)*(v2.y-v0.y);
+    const ny=(v1.z-v0.z)*(v2.x-v0.x)-(v1.x-v0.x)*(v2.z-v0.z);
+    const nz=(v1.x-v0.x)*(v2.y-v0.y)-(v1.y-v0.y)*(v2.x-v0.x);
+    const nl=Math.sqrt(nx*nx+ny*ny+nz*nz)||1;
+    dv.setFloat32(off,nx/nl,true);off+=4;
+    dv.setFloat32(off,ny/nl,true);off+=4;
+    dv.setFloat32(off,nz/nl,true);off+=4;
+    for (const v of [v0,v1,v2]) {
+      dv.setFloat32(off,v.x,true);off+=4;
+      dv.setFloat32(off,v.y,true);off+=4;
+      dv.setFloat32(off,v.z,true);off+=4;
+    }
+    dv.setUint16(off,0,true);off+=2;
+  }
+  dl('face.stl',buf,'application/octet-stream');
+  showToast('✓ STL exported! ('+verts.length+' verts)');
+}
+
+function doExportGLB() {
+  if (!faceMeshGroup) { showToast('⚠ No mesh to export'); return; }
+  if (typeof THREE.GLTFExporter==='undefined') { showToast('⚠ GLTFExporter not loaded'); return; }
+  new THREE.GLTFExporter().parse(faceMeshGroup, result=>{
+    dl(result instanceof ArrayBuffer?'face.glb':'face.gltf',result,
+       result instanceof ArrayBuffer?'application/octet-stream':'application/json');
+    showToast('✓ GLB exported!');
+  },{binary:true,onlyVisible:true});
+}
+
+/* ══════════════════════════════════════════
+   FULLSCREEN
+══════════════════════════════════════════ */
+function toggleFullscreen() {
+  const el=document.documentElement;
+  const isFs=document.fullscreenElement||document.webkitFullscreenElement;
+  if (!isFs) {
+    (el.requestFullscreen||el.webkitRequestFullscreen).call(el).catch(()=>{});
+  } else {
+    (document.exitFullscreen||document.webkitExitFullscreen).call(document).catch(()=>{});
+  }
+}
+const fsHandler=()=>{
+  const isFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  document.getElementById('fs-btn').textContent=isFs?'✕':'⛶';
+  if (threeRenderer) setTimeout(onThreeResize,100);
+};
+document.addEventListener('fullscreenchange',fsHandler);
+document.addEventListener('webkitfullscreenchange',fsHandler);
+
+/* ══════════════════════════════════════════
+   BOOT
+══════════════════════════════════════════ */
+if (typeof FACEMESH_TESSELATION==='undefined') window.FACEMESH_TESSELATION=null;
+window.addEventListener('load',()=>setTimeout(initApp,400));
+</script>
+</body>
+</html>
